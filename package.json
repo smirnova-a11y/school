@@ -1,8 +1,9 @@
 {
-  "name": "bio-bot-pages",
+  "name": "school-bot-pages",
   "private": true,
+  "type": "module",
   "scripts": {
-    "gen": "node scripts/gen-data.cjs"
+    "gen": "node scripts/gen-data.cjs",
+    "build": "npm run gen"
   }
 }
-
