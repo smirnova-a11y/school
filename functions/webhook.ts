@@ -1,6 +1,13 @@
 // functions/webhook.ts
 import { CLASSES, TOPICS, TESTS, SOURCES, type ClassNum, type Topic } from "../src/data";
 
+console.log("DATA sizes", {
+  topics: Object.values(TOPICS).reduce((a, x) => a + x.length, 0),
+  testsKeys: Object.keys(TESTS).length,
+  sourcesKeys: Object.keys(SOURCES).length,
+});
+
+
 type Env = {
   BOT_TOKEN: string;
   WEBHOOK_SECRET?: string;
