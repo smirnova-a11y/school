@@ -1,67 +1,44 @@
-/* scripts/gen-data.cjs */
+// scripts/gen-data.cjs
 const fs = require("fs");
 const path = require("path");
-const { URL } = require("url");
 
 const ROOT = process.cwd();
-const PUBLIC_DIR = path.join(ROOT, "public");
-const ASSETS_DIR = path.join(PUBLIC_DIR, "assets");
-const TESTS_TXT = path.join(PUBLIC_DIR, "tests.txt");
-const SOURCES_TXT = path.join(PUBLIC_DIR, "sources.txt");
+const ASSETS_DIR = path.join(ROOT, "assets");
+const TESTS_TXT = path.join(ROOT, "tests.txt");
+const SOURCES_TXT = path.join(ROOT, "sources.txt");
 const OUT_FILE = path.join(ROOT, "src", "data.ts");
 
-const IMAGE_EXTS = new Set([".jpg", ".jpeg", ".png", ".webp"]);
+const CLASSES = ["5", "9", "11"];
+const IMG_EXTS = new Set([".jpg", ".jpeg", ".png", ".webp"]);
 
-function ensureDir(p) {
-  fs.mkdirSync(p, { recursive: true });
-}
+const TOPIC_RE = /^\s*(\d+)\s*(?:\.\s*(.+))?\s*$/u;
 
 function naturalKey(s) {
-  return s.split(/(\d+)/).map((x) => (x.match(/^\d+$/) ? Number(x) : x.toLowerCase()));
+  return s.split(/(\d+)/).map(x => (x.match(/^\d+$/) ? Number(x) : x.toLowerCase()));
 }
-
-function naturalCompare(a, b) {
-  const ka = naturalKey(a);
-  const kb = naturalKey(b);
-  const n = Math.max(ka.length, kb.length);
-  for (let i = 0; i < n; i++) {
-    const va = ka[i];
-    const vb = kb[i];
-    if (va === undefined) return -1;
-    if (vb === undefined) return 1;
-    if (va === vb) continue;
-    if (typeof va === "number" && typeof vb === "number") return va - vb;
-    return String(va).localeCompare(String(vb), "ru");
+function naturalSort(a, b) {
+  const ak = naturalKey(a);
+  const bk = naturalKey(b);
+  for (let i = 0; i < Math.max(ak.length, bk.length); i++) {
+    if (ak[i] === undefined) return -1;
+    if (bk[i] === undefined) return 1;
+    if (ak[i] < bk[i]) return -1;
+    if (ak[i] > bk[i]) return 1;
   }
   return 0;
-}
-
-// Папка темы: "14" или "1. Ткани и мышцы"
-function parseTopicFolder(folderName) {
-  const m = folderName.match(/^\s*(\d+)\s*(?:\.\s*(.+))?\s*$/u);
-  if (!m) return null;
-  const num = Number(m[1]);
-  const title = m[2] ? String(m[2]).trim() : undefined;
-  return { num, title };
 }
 
 function normalizeUrl(s) {
   s = (s || "").trim();
   if (!s) return s;
   if (s.startsWith("t.me/") || s.startsWith("telegram.me/")) return "https://" + s;
-  try {
-    const u = new URL(s);
-    if (u.protocol === "http:" || u.protocol === "https:") return s;
-  } catch {}
-  // домен без схемы
   if (/^[\w.-]+\.[a-zA-Z]{2,}(\/|$)/.test(s)) return "https://" + s;
   return s;
 }
-
 function isHttpUrl(s) {
   try {
     const u = new URL(s);
-    return (u.protocol === "http:" || u.protocol === "https:") && !!u.host;
+    return u.protocol === "http:" || u.protocol === "https:";
   } catch {
     return false;
   }
@@ -75,128 +52,119 @@ function normTestLabel(label) {
   return String(label || "").trim();
 }
 
-function readLines(filePath) {
-  if (!fs.existsSync(filePath)) return [];
-  const txt = fs.readFileSync(filePath, "utf8");
-  return txt
+function readLines(file) {
+  if (!fs.existsSync(file)) return [];
+  return fs.readFileSync(file, "utf-8")
     .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter((l) => l && !l.startsWith("#"));
+    .map(x => x.trim())
+    .filter(x => x && !x.startsWith("#"));
 }
 
-function parseKv(filePath) {
-  return readLines(filePath).map((line) => line.split("|").map((p) => p.trim()));
+function parseTopics() {
+  const TOPICS = {};
+  for (const cls of CLASSES) {
+    const d = path.join(ASSETS_DIR, cls);
+    const arr = [];
+    if (!fs.existsSync(d)) {
+      TOPICS[cls] = [];
+      continue;
+    }
+    for (const name of fs.readdirSync(d)) {
+      const p = path.join(d, name);
+      if (!fs.statSync(p).isDirectory()) continue;
+      const m = name.match(TOPIC_RE);
+      if (!m) continue;
+
+      const num = Number(m[1]);
+      const title = m[2] ? m[2].trim() : null;
+
+      const images = fs.readdirSync(p)
+        .filter(f => IMG_EXTS.has(path.extname(f).toLowerCase()))
+        .sort(naturalSort);
+
+      arr.push({ num, title, folder: name, images });
+    }
+    arr.sort((a,b)=>a.num-b.num);
+    TOPICS[cls] = arr;
+  }
+  return TOPICS;
 }
 
-function loadTests() {
-  const data = {}; // key "5|14" => [{label,url}]
-  for (const parts of parseKv(TESTS_TXT)) {
+function parseTests() {
+  const out = {};
+  for (const line of readLines(TESTS_TXT)) {
+    const parts = line.split("|").map(x => x.trim());
+    if (parts.length < 3) continue;
+
     let cls, topicS, label, url;
     if (parts.length === 3) {
       [cls, topicS, url] = parts;
       label = "test";
-    } else if (parts.length >= 4) {
+    } else {
       [cls, topicS, label, url] = parts;
-    } else continue;
+    }
 
-    if (!/^\d+$/.test(cls || "") || !/^\d+$/.test(topicS || "")) continue;
+    if (!CLASSES.includes(cls)) continue;
+    if (!/^\d+$/.test(topicS)) continue;
 
     url = normalizeUrl(url);
     if (!isHttpUrl(url)) continue;
 
     const key = `${cls}|${Number(topicS)}`;
-    if (!data[key]) data[key] = [];
-    data[key].push({ label: normTestLabel(label), url });
+    out[key] = out[key] || [];
+    out[key].push({ label: normTestLabel(label), url });
   }
-  return data;
+  return out;
 }
 
-function loadSources() {
-  const data = {}; // key "5|14" => [{title,url}]
-  for (const parts of parseKv(SOURCES_TXT)) {
+function parseSources() {
+  const out = {};
+  for (const line of readLines(SOURCES_TXT)) {
+    const parts = line.split("|").map(x => x.trim());
     if (parts.length < 4) continue;
     const [cls, topicS, title, urlRaw] = parts;
 
-    if (!/^\d+$/.test(cls || "") || !/^\d+$/.test(topicS || "")) continue;
+    if (!CLASSES.includes(cls)) continue;
+    if (!/^\d+$/.test(topicS)) continue;
 
     const url = normalizeUrl(urlRaw);
     if (!isHttpUrl(url)) continue;
 
     const key = `${cls}|${Number(topicS)}`;
-    if (!data[key]) data[key] = [];
-    data[key].push({ title: String(title || "").trim(), url });
+    out[key] = out[key] || [];
+    out[key].push({ title: title.trim(), url });
   }
-  return data;
+  return out;
 }
 
-function loadTopics() {
-  if (!fs.existsSync(ASSETS_DIR)) return { classes: [], topicsByClass: {} };
+function emitTS({ TOPICS, TESTS, SOURCES }) {
+  const header = `/* AUTO-GENERATED. DO NOT EDIT. */\n`;
+  const body =
+`export const CLASSES = ${JSON.stringify(CLASSES)} as const;
+export type ClassNum = typeof CLASSES[number];
 
-  const classDirs = fs
-    .readdirSync(ASSETS_DIR, { withFileTypes: true })
-    .filter((d) => d.isDirectory() && /^\d+$/.test(d.name))
-    .map((d) => d.name)
-    .sort((a, b) => Number(a) - Number(b));
+export type Topic = {
+  num: number;
+  title: string | null;
+  folder: string;
+  images: string[];
+};
 
-  const topicsByClass = {};
+export const TOPICS: Record<string, Topic[]> = ${JSON.stringify(TOPICS, null, 2)};
 
-  for (const cls of classDirs) {
-    const clsPath = path.join(ASSETS_DIR, cls);
-    const topicDirs = fs.readdirSync(clsPath, { withFileTypes: true }).filter((d) => d.isDirectory());
+export const TESTS: Record<string, { label: string; url: string }[]> = ${JSON.stringify(TESTS, null, 2)};
 
-    const topics = [];
-    for (const td of topicDirs) {
-      const parsed = parseTopicFolder(td.name);
-      if (!parsed) continue;
-
-      const topicPath = path.join(clsPath, td.name);
-      const files = fs
-        .readdirSync(topicPath, { withFileTypes: true })
-        .filter((f) => f.isFile())
-        .map((f) => f.name)
-        .filter((name) => IMAGE_EXTS.has(path.extname(name).toLowerCase()))
-        .sort(naturalCompare);
-
-      topics.push({
-        num: parsed.num,
-        title: parsed.title,
-        folder: td.name,   // важно: реальное имя папки, может быть с пробелами/кириллицей
-        images: files
-      });
-    }
-
-    topics.sort((a, b) => a.num - b.num);
-    topicsByClass[cls] = topics;
-  }
-
-  return { classes: classDirs, topicsByClass };
+export const SOURCES: Record<string, { title: string; url: string }[]> = ${JSON.stringify(SOURCES, null, 2)};
+`;
+  fs.mkdirSync(path.dirname(OUT_FILE), { recursive: true });
+  fs.writeFileSync(OUT_FILE, header + body, "utf-8");
+  console.log("✅ Generated:", path.relative(ROOT, OUT_FILE));
 }
 
-function writeDataTs({ classes, topicsByClass, tests, sources }) {
-  ensureDir(path.dirname(OUT_FILE));
-
-  const header =
-`/* AUTO-GENERATED FILE. DO NOT EDIT.
-   Run: npm run gen
-*/\n\n`;
-
-  const content =
-`${header}` +
-`export const CLASSES = ${JSON.stringify(classes, null, 2)} as const;\n\n` +
-`export type ClassNum = (typeof CLASSES)[number];\n\n` +
-`export type Topic = { num: number; title?: string; folder: string; images: string[] };\n\n` +
-`export const TOPICS: Record<string, Topic[]> = ${JSON.stringify(topicsByClass, null, 2)};\n\n` +
-`export const TESTS: Record<string, { label: string; url: string }[]> = ${JSON.stringify(tests, null, 2)};\n\n` +
-`export const SOURCES: Record<string, { title: string; url: string }[]> = ${JSON.stringify(sources, null, 2)};\n`;
-
-  fs.writeFileSync(OUT_FILE, content, "utf8");
-  console.log(`✅ Generated: ${path.relative(ROOT, OUT_FILE)}`);
+function main() {
+  const TOPICS = parseTopics();
+  const TESTS = parseTests();
+  const SOURCES = parseSources();
+  emitTS({ TOPICS, TESTS, SOURCES });
 }
-
-(function main() {
-  const { classes, topicsByClass } = loadTopics();
-  const tests = loadTests();
-  const sources = loadSources();
-
-  writeDataTs({ classes, topicsByClass, tests, sources });
-})();
+main();

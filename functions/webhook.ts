@@ -28,6 +28,15 @@ async function tgCall(env: Env, method: string, payload: Record<string, any>) {
   return data;
 }
 
+let _botUsername: string | null = null;
+async function getBotUsername(env: Env): Promise<string | null> {
+  if (_botUsername) return _botUsername;
+  const me = await tgCall(env, "getMe", {});
+  const u = me?.result?.username;
+  if (typeof u === "string" && u.length) _botUsername = u;
+  return _botUsername;
+}
+
 function classExists(cls: string): cls is ClassNum {
   return (CLASSES as readonly string[]).includes(cls);
 }
@@ -42,7 +51,6 @@ function topicLabel(t: Topic) {
 }
 
 function buildAssetUrl(origin: string, cls: string, folder: string, fileName: string) {
-  // Важно кодировать сегменты, т.к. могут быть пробелы/кириллица
   const enc = (s: string) => encodeURIComponent(s);
   return `${origin}/assets/${enc(cls)}/${enc(folder)}/${enc(fileName)}`;
 }
@@ -70,6 +78,16 @@ function classesKeyboard(selected?: string) {
   }
   if (row.length) inline_keyboard.push([...row]);
   return { inline_keyboard };
+}
+
+function hasCallback(markup: any, prefix: string) {
+  const rows = markup?.inline_keyboard || [];
+  for (const r of rows) {
+    for (const b of r) {
+      if (typeof b?.callback_data === "string" && b.callback_data.startsWith(prefix)) return true;
+    }
+  }
+  return false;
 }
 
 function navKeyboard(
@@ -100,12 +118,8 @@ function navKeyboard(
         { text: padBtn("✅ Пройти тест", 4, 4), callback_data: `tests:${cls}:${topicNum}:open` },
       ]);
     } else {
-      for (const t of tests) {
-        inline_keyboard.push([{ text: padBtn(t.label, 4, 4), url: t.url }]);
-      }
-      inline_keyboard.push([
-        { text: padBtn("⬅️ Назад", 3, 3), callback_data: `tests:${cls}:${topicNum}:close` },
-      ]);
+      for (const t of tests) inline_keyboard.push([{ text: padBtn(t.label, 4, 4), url: t.url }]);
+      inline_keyboard.push([{ text: padBtn("⬅️ Назад", 3, 3), callback_data: `tests:${cls}:${topicNum}:close` }]);
     }
   }
 
@@ -118,24 +132,17 @@ function navKeyboard(
         { text: padBtn("📎 Доп. источники", 4, 4), callback_data: `sources:${cls}:${topicNum}:open` },
       ]);
     } else {
-      for (const s of sources) {
-        inline_keyboard.push([{ text: padBtn(s.title, 4, 4), url: s.url }]);
-      }
-      inline_keyboard.push([
-        { text: padBtn("⬅️ Назад", 3, 3), callback_data: `sources:${cls}:${topicNum}:close` },
-      ]);
+      for (const s of sources) inline_keyboard.push([{ text: padBtn(s.title, 4, 4), url: s.url }]);
+      inline_keyboard.push([{ text: padBtn("⬅️ Назад", 3, 3), callback_data: `sources:${cls}:${topicNum}:close` }]);
     }
   }
 
-  // Навигация
   const navRow: any[] = [{ text: padBtn("⬅️ Назад", 3, 3), callback_data: `back:topics:${cls}` }];
   if (prev !== null) navRow.push({ text: padBtn("⬅️ Предыдущая тема", 2, 2), callback_data: `topic:${cls}:${prev}` });
   if (next !== null) navRow.push({ text: padBtn("➡️ Следующая тема", 2, 2), callback_data: `topic:${cls}:${next}` });
   inline_keyboard.push(navRow);
 
-  // Меню
   inline_keyboard.push([{ text: padBtn("🏠 Меню", 3, 3), callback_data: "menu" }]);
-
   return { inline_keyboard };
 }
 
@@ -160,7 +167,6 @@ async function sendTopic(env: Env, origin: string, chatId: number, cls: ClassNum
     return;
   }
 
-  // отправка пачками по 10 (лимит sendMediaGroup: 2–10) :contentReference[oaicite:7]{index=7}
   for (let i = 0; i < images.length; i += 10) {
     const chunk = images.slice(i, i + 10);
     if (chunk.length === 1) {
@@ -171,10 +177,9 @@ async function sendTopic(env: Env, origin: string, chatId: number, cls: ClassNum
         type: "photo",
         media: buildAssetUrl(origin, cls, topic.folder, file),
       }));
-      await tgCall(env, "sendMediaGroup", {
-        chat_id: chatId,
-        media: JSON.stringify(media), // Telegram ждёт JSON-сериализованный массив :contentReference[oaicite:8]{index=8}
-      });
+
+      // ✅ ВАЖНО: media должен быть массивом, а не строкой
+      await tgCall(env, "sendMediaGroup", { chat_id: chatId, media });
     }
   }
 
@@ -185,16 +190,51 @@ async function sendTopic(env: Env, origin: string, chatId: number, cls: ClassNum
   });
 }
 
+async function ensurePrivateOrGuide(env: Env, chat: any, fromUser: any) {
+  const type = chat?.type;
+  if (type === "private") return true;
+
+  // В группах делаем только подсказку "в личку"
+  const username = await getBotUsername(env);
+  const url = username ? `https://t.me/${username}` : null;
+
+  // попытка написать пользователю в личку (сработает только если он уже нажал Start в личке)
+  if (fromUser?.id) {
+    try {
+      await tgCall(env, "sendMessage", {
+        chat_id: fromUser.id,
+        text: "👋 Открой бота в личных сообщениях, чтобы меню было отдельно для тебя.",
+        reply_markup: url
+          ? { inline_keyboard: [[{ text: padBtn("Открыть бота", 4, 4), url }]] }
+          : undefined,
+      });
+    } catch {}
+  }
+
+  // сообщение в группу (одноразово можно оставить)
+  await tgCall(env, "sendMessage", {
+    chat_id: chat.id,
+    text: "⚠️ В группах меню общее на всех. Напиши боту в личку (/start), чтобы всё работало отдельно для каждого.",
+    reply_markup: url ? { inline_keyboard: [[{ text: padBtn("Открыть бота", 4, 4), url }]] } : undefined,
+  });
+
+  return false;
+}
+
 async function handleCallback(env: Env, origin: string, cq: any) {
   const data: string = cq.data || "";
-  const chatId = cq.message?.chat?.id;
+  const chat = cq.message?.chat;
+  const chatId = chat?.id;
   const messageId = cq.message?.message_id;
   const cqId = cq.id;
 
-  // всегда отвечаем на callback, чтобы Telegram убрал "часики"
   await tgCall(env, "answerCallbackQuery", { callback_query_id: cqId });
 
   if (!chatId || !messageId) return;
+
+  // ✅ если не личка — не редактируем общее сообщение
+  const okPrivate = await ensurePrivateOrGuide(env, chat, cq.from);
+  if (!okPrivate) return;
 
   if (data === "menu") {
     await tgCall(env, "editMessageText", {
@@ -238,53 +278,63 @@ async function handleCallback(env: Env, origin: string, cq: any) {
     const topicNum = Number(topicRaw);
     if (!Number.isFinite(topicNum)) return;
 
-    // отправим тему отдельными сообщениями (картинки + навигация)
     await sendTopic(env, origin, chatId, clsRaw, topicNum);
     return;
   }
 
-  // Аккордеон тестов: tests:<class>:<topic>:open|close
+  // tests:<class>:<topic>:open|close
   if (data.startsWith("tests:")) {
     const parts = data.split(":");
     if (parts.length !== 4) return;
     const cls = parts[1];
     const topicNum = Number(parts[2]);
-    const action = parts[3]; // open|close
+    const action = parts[3];
     if (!classExists(cls) || !Number.isFinite(topicNum)) return;
 
-    const expanded = action === "open";
+    const nowSourcesExpanded = hasCallback(cq.message?.reply_markup, `sources:${cls}:${topicNum}:close`);
     await tgCall(env, "editMessageReplyMarkup", {
       chat_id: chatId,
       message_id: messageId,
-      reply_markup: navKeyboard(cls, topicNum, { testsExpanded: expanded, sourcesExpanded: false }),
+      reply_markup: navKeyboard(cls, topicNum, {
+        testsExpanded: action === "open",
+        sourcesExpanded: nowSourcesExpanded,
+      }),
     });
     return;
   }
 
-  // Аккордеон источников: sources:<class>:<topic>:open|close
+  // sources:<class>:<topic>:open|close
   if (data.startsWith("sources:")) {
     const parts = data.split(":");
     if (parts.length !== 4) return;
     const cls = parts[1];
     const topicNum = Number(parts[2]);
-    const action = parts[3]; // open|close
+    const action = parts[3];
     if (!classExists(cls) || !Number.isFinite(topicNum)) return;
 
-    const expanded = action === "open";
+    const nowTestsExpanded = hasCallback(cq.message?.reply_markup, `tests:${cls}:${topicNum}:close`);
     await tgCall(env, "editMessageReplyMarkup", {
       chat_id: chatId,
       message_id: messageId,
-      reply_markup: navKeyboard(cls, topicNum, { testsExpanded: false, sourcesExpanded: expanded }),
+      reply_markup: navKeyboard(cls, topicNum, {
+        testsExpanded: nowTestsExpanded,
+        sourcesExpanded: action === "open",
+      }),
     });
     return;
   }
 }
 
 async function handleMessage(env: Env, msg: any) {
-  const chatId = msg.chat?.id;
+  const chat = msg.chat;
+  const chatId = chat?.id;
   const text: string = msg.text || "";
 
   if (!chatId) return;
+
+  // ✅ если не личка — просим перейти в личку
+  const okPrivate = await ensurePrivateOrGuide(env, chat, msg.from);
+  if (!okPrivate) return;
 
   if (text.startsWith("/start") || text.startsWith("/menu")) {
     await tgCall(env, "sendMessage", {
@@ -304,12 +354,9 @@ async function handleMessage(env: Env, msg: any) {
 export const onRequestPost: PagesFunction<Env> = async (ctx) => {
   const { request, env } = ctx;
 
-  // Проверка secret_token webhook :contentReference[oaicite:9]{index=9}
   if (env.WEBHOOK_SECRET) {
     const got = request.headers.get("X-Telegram-Bot-Api-Secret-Token");
-    if (got !== env.WEBHOOK_SECRET) {
-      return new Response("forbidden", { status: 403 });
-    }
+    if (got !== env.WEBHOOK_SECRET) return new Response("forbidden", { status: 403 });
   }
 
   const origin = new URL(request.url).origin;
@@ -317,11 +364,8 @@ export const onRequestPost: PagesFunction<Env> = async (ctx) => {
   if (!update) return new Response("bad request", { status: 400 });
 
   try {
-    if (update.callback_query) {
-      await handleCallback(env, origin, update.callback_query);
-    } else if (update.message) {
-      await handleMessage(env, update.message);
-    }
+    if (update.callback_query) await handleCallback(env, origin, update.callback_query);
+    else if (update.message) await handleMessage(env, update.message);
   } catch (e) {
     console.log("handler error", e);
   }
@@ -329,7 +373,4 @@ export const onRequestPost: PagesFunction<Env> = async (ctx) => {
   return new Response("ok");
 };
 
-// (необязательно) GET для проверки “жив ли endpoint”
-export const onRequestGet: PagesFunction<Env> = async () => {
-  return new Response("OK");
-};
+export const onRequestGet: PagesFunction<Env> = async () => new Response("OK");
