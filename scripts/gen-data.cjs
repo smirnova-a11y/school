@@ -1,4 +1,8 @@
 // scripts/gen-data.cjs
+console.log("CWD:", process.cwd());
+console.log("tests exists:", fs.existsSync(TESTS_TXT), TESTS_TXT);
+console.log("sources exists:", fs.existsSync(SOURCES_TXT), SOURCES_TXT);
+
 const fs = require("fs");
 const path = require("path");
 
