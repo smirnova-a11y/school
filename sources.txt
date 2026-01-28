@@ -1,0 +1,8 @@
+5|14|доп|https://studarium.ru/article/140
+5|16|доп|https://umschool.net/library/biologiya/sreda-obitaniya-organizmov-ekologicheskie-faktory-1-0/
+5|17|доп|https://umschool.net/library/biologiya/sreda-obitaniya-organizmov-ekologicheskie-faktory-1-0/#part3
+9|1|Ткани|https://studarium.ru/article/77
+9|1|Кости и мышцы|https://studarium.ru/article/81
+9|2|доп|https://studarium.ru/article/102
+9|3|доп|https://studarium.ru/article/108
+9|4|доп|https://studarium.ru/article/84

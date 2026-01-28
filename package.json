@@ -1,1 +1,8 @@
+{
+  "name": "bio-bot-pages",
+  "private": true,
+  "scripts": {
+    "gen": "node scripts/gen-data.cjs"
+  }
+}
 

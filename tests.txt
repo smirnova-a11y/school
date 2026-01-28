@@ -1,0 +1,10 @@
+5|14|basic|t.me/QuizBot?start=muEjNiqQ
+5|14|advanced|t.me/QuizBot?start=YJKAobZ1
+5|16|test|t.me/QuizBot?start=qRMPbn84
+5|17|test|t.me/QuizBot?start=WkmwVFpC
+9|1|test|https://t.me/QuizBot?start=HAFqUxtx
+9|2|test|t.me/QuizBot?start=cySnM2A9
+9|3|test|t.me/QuizBot?start=NAD7ikWE
+9|4|test|t.me/QuizBot?start=yDrI64GA
+11|1|test|t.me/QuizBot?start=3iKNTQkT
+11|2|test|t.me/QuizBot?start=Mifa4oIr
